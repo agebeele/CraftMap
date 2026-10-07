@@ -1,0 +1,6 @@
+{
+  "name": "CraftMap",
+  "description": "Explora el mundo real estilo Minecraft: convierte coordenadas GPS a bloques X, Y, Z, establece World Spawn con amigos, visualiza avatares con skins y sincroniza en tiempo real con Firebase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
