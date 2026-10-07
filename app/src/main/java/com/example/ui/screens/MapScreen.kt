@@ -20,9 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocation
-import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Layers
@@ -231,7 +231,7 @@ fun MapScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Default.DirectionsWalk,
+                                Icons.AutoMirrored.Filled.DirectionsWalk,
                                 contentDescription = "Simulador de Paseo",
                                 tint = if (showSimControls) GoldAccent else Color(0xFFA0AEC0),
                                 modifier = Modifier.size(16.dp)
