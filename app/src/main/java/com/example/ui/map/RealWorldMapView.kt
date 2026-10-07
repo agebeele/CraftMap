@@ -7,8 +7,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,19 +29,18 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocation
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.GridOn
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +57,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.data.converter.CoordinateConverter
 import com.example.data.model.GroupMember
@@ -75,7 +76,6 @@ import com.example.ui.components.MinecraftButton
 import com.example.ui.theme.DiamondCyan
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.GrassGreenPrimary
-import com.example.ui.theme.NetherPortalPurple
 import com.example.ui.theme.RedstoneAccent
 import kotlin.math.cos
 import kotlin.math.floor
@@ -99,11 +99,17 @@ fun RealWorldMapView(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+
+    // Proper tile dimension in DP so it matches exactly 256 physical pixels on any display density
+    val tileSizeDp = with(density) { TileMath.TILE_SIZE.toDp() }
 
     // Camera Center (Lat / Lng) and Zoom Level (12 to 18)
     var cameraLat by remember(centerLat) { mutableDoubleStateOf(centerLat) }
     var cameraLng by remember(centerLng) { mutableDoubleStateOf(centerLng) }
     var zoomLevel by remember { mutableIntStateOf(16) } // Street-level zoom
+    var zoomAccumulator by remember { mutableFloatStateOf(1.0f) }
+
     var selectedLayer by remember { mutableStateOf(MapTileLayer.SATELLITE) }
     var showChunkGrid by remember { mutableStateOf(true) }
 
@@ -121,13 +127,13 @@ fun RealWorldMapView(
         val halfW = screenWidthPx / 2f
         val halfH = screenHeightPx / 2f
 
-        // Center Tile Coordinates
+        // Center Tile Coordinates in Web Mercator
         val centerTileX = TileMath.lngToTileX(cameraLng, zoomLevel)
         val centerTileY = TileMath.latToTileY(cameraLat, zoomLevel)
 
-        // Calculate visible tile ranges
-        val tilesAcross = (screenWidthPx / TileMath.TILE_SIZE).toInt() + 2
-        val tilesDown = (screenHeightPx / TileMath.TILE_SIZE).toInt() + 2
+        // Calculate visible tile ranges with generous margins for smooth panning
+        val tilesAcross = (screenWidthPx / TileMath.TILE_SIZE).toInt() + 3
+        val tilesDown = (screenHeightPx / TileMath.TILE_SIZE).toInt() + 3
 
         val startTileX = floor(centerTileX - tilesAcross / 2.0).toInt()
         val endTileX = startTileX + tilesAcross + 1
@@ -135,67 +141,87 @@ fun RealWorldMapView(
         val endTileY = startTileY + tilesDown + 1
         val maxTileIndex = (1 shl zoomLevel) - 1
 
-        // 1. Base Layer: Real Map Tiles
+        // 1. Gesture Detection Layer (Never cancelled on drag because key is Unit!)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(zoomLevel, cameraLat, cameraLng) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        // Dragging shifts the camera center
-                        val deltaTileX = dragAmount.x / TileMath.TILE_SIZE.toDouble()
-                        val deltaTileY = dragAmount.y / TileMath.TILE_SIZE.toDouble()
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        // Smooth Pan
+                        val deltaTileX = pan.x / TileMath.TILE_SIZE.toDouble()
+                        val deltaTileY = pan.y / TileMath.TILE_SIZE.toDouble()
 
-                        val newCenterTileX = centerTileX - deltaTileX
-                        val newCenterTileY = centerTileY - deltaTileY
+                        val currentCenterTileX = TileMath.lngToTileX(cameraLng, zoomLevel)
+                        val currentCenterTileY = TileMath.latToTileY(cameraLat, zoomLevel)
 
-                        cameraLng = TileMath.tileXToLng(newCenterTileX, zoomLevel)
-                        cameraLat = TileMath.tileYToLat(newCenterTileY, zoomLevel)
+                        cameraLng = TileMath.tileXToLng(currentCenterTileX - deltaTileX, zoomLevel)
+                        cameraLat = TileMath.tileYToLat(currentCenterTileY - deltaTileY, zoomLevel)
+
+                        // Continuous Pinch Zoom
+                        zoomAccumulator *= zoom
+                        if (zoomAccumulator > 1.35f && zoomLevel < 18) {
+                            zoomLevel++
+                            zoomAccumulator = 1.0f
+                        } else if (zoomAccumulator < 0.74f && zoomLevel > 11) {
+                            zoomLevel--
+                            zoomAccumulator = 1.0f
+                        }
                     }
                 }
-                .pointerInput(zoomLevel, cameraLat, cameraLng) {
-                    detectTapGestures { tapOffset ->
-                        val dxPx = tapOffset.x - halfW
-                        val dyPx = tapOffset.y - halfH
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            if (zoomLevel < 18) zoomLevel++
+                        },
+                        onTap = { tapOffset ->
+                            val dxPx = tapOffset.x - halfW
+                            val dyPx = tapOffset.y - halfH
 
-                        val tapTileX = centerTileX + dxPx / TileMath.TILE_SIZE.toDouble()
-                        val tapTileY = centerTileY + dyPx / TileMath.TILE_SIZE.toDouble()
+                            val curCenterTileX = TileMath.lngToTileX(cameraLng, zoomLevel)
+                            val curCenterTileY = TileMath.latToTileY(cameraLat, zoomLevel)
 
-                        val tapLng = TileMath.tileXToLng(tapTileX, zoomLevel)
-                        val tapLat = TileMath.tileYToLat(tapTileY, zoomLevel)
+                            val tapTileX = curCenterTileX + dxPx / TileMath.TILE_SIZE.toDouble()
+                            val tapTileY = curCenterTileY + dyPx / TileMath.TILE_SIZE.toDouble()
 
-                        val mcCoords = CoordinateConverter.gpsToMinecraft(
-                            targetLat = tapLat,
-                            targetLng = tapLng,
-                            targetAlt = spawnAlt,
-                            spawnLat = spawnLat,
-                            spawnLng = spawnLng,
-                            spawnAlt = spawnAlt
-                        )
-                        inspectedLocation = Triple(tapLat, tapLng, mcCoords)
-                    }
+                            val tapLng = TileMath.tileXToLng(tapTileX, zoomLevel)
+                            val tapLat = TileMath.tileYToLat(tapTileY, zoomLevel)
+
+                            val mcCoords = CoordinateConverter.gpsToMinecraft(
+                                targetLat = tapLat,
+                                targetLng = tapLng,
+                                targetAlt = spawnAlt,
+                                spawnLat = spawnLat,
+                                spawnLng = spawnLng,
+                                spawnAlt = spawnAlt
+                            )
+                            inspectedLocation = Triple(tapLat, tapLng, mcCoords)
+                        }
+                    )
                 }
         ) {
+            // Render Real Map Tiles perfectly stitched without gaps or overlaps
             for (tx in startTileX..endTileX) {
                 for (ty in startTileY..endTileY) {
                     if (tx in 0..maxTileIndex && ty in 0..maxTileIndex) {
-                        val tileScreenX = halfW + ((tx - centerTileX) * TileMath.TILE_SIZE).toFloat()
-                        val tileScreenY = halfH + ((ty - centerTileY) * TileMath.TILE_SIZE).toFloat()
+                        val tileScreenXPx = halfW + ((tx - centerTileX) * TileMath.TILE_SIZE).toFloat()
+                        val tileScreenYPx = halfH + ((ty - centerTileY) * TileMath.TILE_SIZE).toFloat()
 
                         val tileUrl = selectedLayer.getTileUrl(tx, ty, zoomLevel)
 
                         AsyncImage(
                             model = ImageRequest.Builder(context)
                                 .data(tileUrl)
-                                .addHeader("User-Agent", "CraftMap/1.0 (Android; Minecraft Real Maps)")
-                                .crossfade(150)
+                                .addHeader("User-Agent", "CraftMap-Android/1.0 (Minecraft GPS Real Maps)")
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .crossfade(false)
                                 .build(),
                             contentDescription = null,
                             contentScale = ContentScale.FillBounds,
                             modifier = Modifier
-                                .size(TileMath.TILE_SIZE.dp)
+                                .size(tileSizeDp)
                                 .offset {
-                                    IntOffset(tileScreenX.roundToInt(), tileScreenY.roundToInt())
+                                    IntOffset(tileScreenXPx.roundToInt(), tileScreenYPx.roundToInt())
                                 }
                         )
                     }
@@ -235,7 +261,7 @@ fun RealWorldMapView(
             // C. Draw Waypoint Pins (Homes, Mines, Portals)
             waypoints.forEach { wp ->
                 val wpOffset = gpsToScreen(wp.gpsLat, wp.gpsLng)
-                if (wpOffset.x in -100f..(screenWidthPx + 100f) && wpOffset.y in -100f..(screenHeightPx + 100f)) {
+                if (wpOffset.x in -150f..(screenWidthPx + 150f) && wpOffset.y in -150f..(screenHeightPx + 150f)) {
                     drawRealMapWaypoint(
                         screenX = wpOffset.x,
                         screenY = wpOffset.y,
@@ -247,7 +273,7 @@ fun RealWorldMapView(
             // D. Draw Other Companions
             members.forEach { m ->
                 val mOffset = gpsToScreen(m.lat, m.lng)
-                if (mOffset.x in -100f..(screenWidthPx + 100f) && mOffset.y in -100f..(screenHeightPx + 100f)) {
+                if (mOffset.x in -150f..(screenWidthPx + 150f) && mOffset.y in -150f..(screenHeightPx + 150f)) {
                     drawRealMapPlayerMarker(
                         screenX = mOffset.x,
                         screenY = mOffset.y,
@@ -277,21 +303,21 @@ fun RealWorldMapView(
                 val ptOffset = gpsToScreen(lat, lng)
                 drawCircle(
                     color = GoldAccent,
-                    radius = 18f,
+                    radius = 20f,
                     center = ptOffset,
-                    style = Stroke(width = 3f)
+                    style = Stroke(width = 3.5f)
                 )
                 drawLine(
                     color = GoldAccent,
-                    start = Offset(ptOffset.x - 26f, ptOffset.y),
-                    end = Offset(ptOffset.x + 26f, ptOffset.y),
-                    strokeWidth = 2.5f
+                    start = Offset(ptOffset.x - 28f, ptOffset.y),
+                    end = Offset(ptOffset.x + 28f, ptOffset.y),
+                    strokeWidth = 3f
                 )
                 drawLine(
                     color = GoldAccent,
-                    start = Offset(ptOffset.x, ptOffset.y - 26f),
-                    end = Offset(ptOffset.x, ptOffset.y + 26f),
-                    strokeWidth = 2.5f
+                    start = Offset(ptOffset.x, ptOffset.y - 28f),
+                    end = Offset(ptOffset.x, ptOffset.y + 28f),
+                    strokeWidth = 3f
                 )
             }
         }
@@ -510,7 +536,6 @@ private fun DrawScope.drawMinecraftRealChunkGrid(
     canvasH: Float
 ) {
     // In Minecraft, 1 chunk = 16 blocks (16 meters)
-    // Meters to degrees at spawn latitude:
     val latRad = Math.toRadians(spawnLat)
     val metersPerDegreeLat = 111195.0
     val metersPerDegreeLng = 111195.0 * cos(latRad).coerceAtLeast(0.01)
@@ -522,7 +547,7 @@ private fun DrawScope.drawMinecraftRealChunkGrid(
     val chunkTileW = (chunkDLng / 360.0 * (1 shl zoom)) * TileMath.TILE_SIZE
     val chunkTileH = (chunkDLat / 360.0 * (1 shl zoom)) * TileMath.TILE_SIZE
 
-    if (chunkTileW < 8f) return // Too small to draw without clutter
+    if (chunkTileW < 10f) return // Too small to draw cleanly
 
     // Project Spawn onto screen
     val spawnTileX = TileMath.lngToTileX(spawnLng, zoom)
@@ -530,7 +555,7 @@ private fun DrawScope.drawMinecraftRealChunkGrid(
     val spawnScreenX = halfW + ((spawnTileX - centerTileX) * TileMath.TILE_SIZE).toFloat()
     val spawnScreenY = halfH + ((spawnTileY - centerTileY) * TileMath.TILE_SIZE).toFloat()
 
-    val gridColor = Color(0x3B47A036) // Translucent Minecraft Emerald grid
+    val gridColor = Color(0x4047A036) // Translucent Minecraft Emerald grid
 
     // Draw vertical chunk grid lines
     var x = spawnScreenX % chunkTileW.toFloat()
@@ -540,7 +565,7 @@ private fun DrawScope.drawMinecraftRealChunkGrid(
             color = gridColor,
             start = Offset(x, 0f),
             end = Offset(x, canvasH),
-            strokeWidth = 1f
+            strokeWidth = 1.2f
         )
         x += chunkTileW.toFloat()
     }
@@ -553,7 +578,7 @@ private fun DrawScope.drawMinecraftRealChunkGrid(
             color = gridColor,
             start = Offset(0f, y),
             end = Offset(canvasW, y),
-            strokeWidth = 1f
+            strokeWidth = 1.2f
         )
         y += chunkTileH.toFloat()
     }
