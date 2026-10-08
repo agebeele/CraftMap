@@ -1,18 +1,25 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
 import android.location.Location
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.converter.CoordinateConverter
 import com.example.data.model.GroupMember
 import com.example.data.model.GroupRealm
 import com.example.data.model.MinecraftCoords
+import com.example.data.model.RealmInvite
 import com.example.data.model.UserProfile
 import com.example.data.model.Waypoint
 import com.example.data.model.WaypointType
 import com.example.data.repository.CraftMapRepository
+import com.example.ui.util.NotificationHelper
 import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +44,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val userLng = MutableStateFlow(-99.133209)
     val userAlt = MutableStateFlow(2240.0)
     val userHeading = MutableStateFlow(0f)
+
+    // Targeted camera center for the map to jump to
+    val mapCameraCenter = MutableStateFlow<Pair<Double, Double>?>(null)
 
     val allRealms: StateFlow<List<GroupRealm>> = repository.allRealms.stateIn(
         viewModelScope,
@@ -96,9 +106,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MinecraftCoords(0, 64, 0))
 
+    // Realm Invites List (with persistent/shared in-memory state)
+    val invites = MutableStateFlow<List<RealmInvite>>(listOf(
+        RealmInvite(
+            id = "inv_sample_1",
+            realmId = "realm_overworld_main",
+            realmName = "Servidor Overworld Alpha",
+            realmCode = "MC-777",
+            senderGamertag = "SteveTheMiner",
+            targetGamertag = "AlexCraft99",
+            status = "Pendiente"
+        )
+    ))
+
     // UI Message feedback
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage = _snackbarMessage.asStateFlow()
+
+    private var isLocationTrackingStarted = false
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.lastLocation?.let { loc ->
+                updateGpsLocation(loc)
+            }
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -108,6 +140,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSnackbar() {
         _snackbarMessage.value = null
+    }
+
+    fun startContinuousLocationUpdates() {
+        if (isLocationTrackingStarted) return
+        try {
+            val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2500L)
+                .setMinUpdateDistanceMeters(1f)
+                .build()
+            fusedLocationClient.requestLocationUpdates(
+                req,
+                locationCallback,
+                Looper.getMainLooper()
+            )
+            isLocationTrackingStarted = true
+        } catch (e: SecurityException) {
+            // Ignored if permission denied
+        }
     }
 
     fun updateGpsLocation(location: Location) {
@@ -144,12 +193,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .addOnSuccessListener { loc ->
                     if (loc != null) {
                         updateGpsLocation(loc)
-                        _snackbarMessage.value = "GPS actualizado con precisión"
+                        mapCameraCenter.value = Pair(loc.latitude, loc.longitude)
+                        _snackbarMessage.value = "GPS real actualizado: ${String.format("%.4f", loc.latitude)}, ${String.format("%.4f", loc.longitude)}"
                     }
                 }
         } catch (e: SecurityException) {
             _snackbarMessage.value = "Permiso de ubicación no concedido"
         }
+    }
+
+    fun teleportToSpawn() {
+        val realm = activeRealm.value ?: return
+        userLat.value = realm.spawnLat
+        userLng.value = realm.spawnLng
+        userAlt.value = realm.spawnAlt
+        mapCameraCenter.value = Pair(realm.spawnLat, realm.spawnLng)
+
+        val profile = userProfile.value
+        viewModelScope.launch {
+            repository.updateMemberLocation(
+                groupId = realm.id,
+                userId = profile.id,
+                gamertag = profile.gamertag,
+                skinPreset = profile.skinPreset,
+                customSkinUri = profile.customSkinUri,
+                lat = realm.spawnLat,
+                lng = realm.spawnLng,
+                alt = realm.spawnAlt,
+                spawnLat = realm.spawnLat,
+                spawnLng = realm.spawnLng,
+                spawnAlt = realm.spawnAlt,
+                status = "En Spawn"
+            )
+        }
+        _snackbarMessage.value = "Te has ubicado en el World Spawn (X: 0, Y: 64, Z: 0)"
     }
 
     fun createRealm(
@@ -159,6 +236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         customLat: Double = 0.0,
         customLng: Double = 0.0,
         customAlt: Double = 0.0,
+        password: String = "",
         spawnLabel: String = "World Spawn (0,64,0)"
     ) {
         viewModelScope.launch {
@@ -172,22 +250,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 spawnLat = spawnLat,
                 spawnLng = spawnLng,
                 spawnAlt = spawnAlt,
+                password = password.trim(),
                 spawnLabel = spawnLabel
             )
 
             // Switch to new realm
             val currentProf = userProfile.value
             repository.saveUserProfile(currentProf.copy(activeGroupId = newRealm.id))
-            _snackbarMessage.value = "¡Reino '${newRealm.name}' creado con World Spawn!"
+
+            // If the user entered custom coordinates of where they are, sync user position and camera immediately!
+            if (!useCurrentGpsAsSpawn) {
+                userLat.value = spawnLat
+                userLng.value = spawnLng
+                userAlt.value = spawnAlt
+            }
+            mapCameraCenter.value = Pair(spawnLat, spawnLng)
+
+            repository.updateMemberLocation(
+                groupId = newRealm.id,
+                userId = currentProf.id,
+                gamertag = currentProf.gamertag,
+                skinPreset = currentProf.skinPreset,
+                customSkinUri = currentProf.customSkinUri,
+                lat = spawnLat,
+                lng = spawnLng,
+                alt = spawnAlt,
+                spawnLat = spawnLat,
+                spawnLng = spawnLng,
+                spawnAlt = spawnAlt,
+                heading = 0f,
+                status = "En Spawn"
+            )
+
+            val passMsg = if (password.isNotBlank()) " (Protegido con contraseña)" else ""
+            _snackbarMessage.value = "¡Reino '${newRealm.name}' creado$passMsg! World Spawn en [X:0, Y:64, Z:0]"
         }
     }
 
-    fun joinRealm(code: String) {
+    fun joinRealm(code: String, passwordAttempt: String = "") {
         viewModelScope.launch {
             val realm = repository.joinRealmByCode(code)
             if (realm != null) {
+                if (realm.password.isNotBlank() && realm.password != passwordAttempt.trim()) {
+                    _snackbarMessage.value = "🔒 Contraseña requerida o incorrecta para '${realm.name}'"
+                    return@launch
+                }
                 val currentProf = userProfile.value
                 repository.saveUserProfile(currentProf.copy(activeGroupId = realm.id))
+                mapCameraCenter.value = Pair(realm.spawnLat, realm.spawnLng)
                 _snackbarMessage.value = "Conectado al Reino '${realm.name}'"
             } else {
                 _snackbarMessage.value = "Código de Reino no encontrado. Prueba con MC-777"
@@ -199,7 +309,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val currentProf = userProfile.value
             repository.saveUserProfile(currentProf.copy(activeGroupId = realmId))
+            val target = allRealms.value.find { it.id == realmId }
+            if (target != null) {
+                mapCameraCenter.value = Pair(target.spawnLat, target.spawnLng)
+            }
             _snackbarMessage.value = "Reino activo cambiado"
+        }
+    }
+
+    fun sendRealmInvite(targetGamertag: String, realm: GroupRealm, context: Context) {
+        if (targetGamertag.isBlank()) return
+        val newInvite = RealmInvite(
+            id = "inv_" + UUID.randomUUID().toString().take(8),
+            realmId = realm.id,
+            realmName = realm.name,
+            realmCode = realm.code,
+            senderGamertag = userProfile.value.gamertag,
+            targetGamertag = targetGamertag.trim(),
+            requiresPassword = realm.password.isNotBlank(),
+            realmPassword = realm.password,
+            status = "Enviada"
+        )
+        invites.value = listOf(newInvite) + invites.value
+
+        // Trigger real Android System Notification
+        NotificationHelper.showRealmInviteNotification(
+            context = context,
+            senderGamertag = userProfile.value.gamertag,
+            targetGamertag = targetGamertag.trim(),
+            realmName = realm.name,
+            realmCode = realm.code
+        )
+        _snackbarMessage.value = "Notificación generada e invitación enviada a @$targetGamertag"
+    }
+
+    fun acceptRealmInvite(invite: RealmInvite, passwordAttempt: String = "") {
+        viewModelScope.launch {
+            val pass = if (passwordAttempt.isNotBlank()) passwordAttempt else invite.realmPassword
+            joinRealm(invite.realmCode, pass)
+            invites.value = invites.value.map {
+                if (it.id == invite.id) it.copy(status = "Aceptada") else it
+            }
         }
     }
 
@@ -227,9 +377,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     spawnLng = realm.spawnLng,
                     spawnAlt = realm.spawnAlt
                 )
-                lat = gps.latitude
-                lng = gps.longitude
-                alt = gps.altitude
+                lat = targetGpsLat ?: gps.latitude
+                lng = targetGpsLng ?: gps.longitude
+                alt = targetGpsAlt ?: gps.altitude
             } else if (targetGpsLat != null && targetGpsLng != null) {
                 lat = targetGpsLat
                 lng = targetGpsLng
@@ -323,6 +473,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setSimulationLocationOffset(dLat: Double, dLng: Double) {
         userLat.value += dLat
         userLng.value += dLng
+        mapCameraCenter.value = Pair(userLat.value, userLng.value)
         val realm = activeRealm.value ?: return
         val profile = userProfile.value
         viewModelScope.launch {

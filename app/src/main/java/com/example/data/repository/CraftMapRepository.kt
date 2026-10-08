@@ -208,6 +208,7 @@ class CraftMapRepository(context: Context) {
         spawnLat: Double,
         spawnLng: Double,
         spawnAlt: Double,
+        password: String = "",
         spawnLabel: String = "World Spawn"
     ): GroupRealm {
         val randomCode = "MC-" + (100..999).random()
@@ -216,6 +217,7 @@ class CraftMapRepository(context: Context) {
             name = name,
             code = randomCode,
             description = description,
+            password = password,
             spawnLat = spawnLat,
             spawnLng = spawnLng,
             spawnAlt = spawnAlt,

@@ -20,8 +20,10 @@ import androidx.compose.material.icons.filled.CompassCalibration
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +55,7 @@ fun MinecraftCoordinateHud(
     spawnLat: Double,
     spawnLng: Double,
     realmName: String,
+    onToggleVisibility: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -92,10 +95,47 @@ fun MinecraftCoordinateHud(
                         letterSpacing = 1.sp
                     )
                 }
-                MinecraftBadge(
-                    text = "$realmName",
-                    color = GoldAccent
-                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    MinecraftBadge(
+                        text = "$realmName",
+                        color = GoldAccent
+                    )
+
+                    if (onToggleVisibility != null) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF283445),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF42536A)),
+                            modifier = Modifier
+                                .clickable { onToggleVisibility() }
+                                .testTag("btn_collapse_coords")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.VisibilityOff,
+                                    contentDescription = "Ocultar",
+                                    tint = Color(0xFFE2E8F0),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Ocultar",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(6.dp))

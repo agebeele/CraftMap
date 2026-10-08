@@ -97,10 +97,10 @@ class ExampleUnitTest {
 
     @Test
     fun testTileUrlGeneration() {
-        val satUrl = MapTileLayer.SATELLITE.getTileUrl(100, 200, 10)
-        assertTrue("Satellite url contains arcgisonline", satUrl.contains("arcgisonline.com"))
+        val hybridUrl = MapTileLayer.GOOGLE_HYBRID.getTileUrl(100, 200, 10)
+        assertTrue("Hybrid url contains google", hybridUrl.contains("google.com"))
 
-        val streetUrl = MapTileLayer.STREETS.getTileUrl(100, 200, 10)
-        assertTrue("Street url contains openstreetmap", streetUrl.contains("openstreetmap.org"))
+        val streetUrl = MapTileLayer.GOOGLE_STREETS.getTileUrl(100, 200, 10)
+        assertTrue("Street url contains google", streetUrl.contains("google.com"))
     }
 }

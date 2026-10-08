@@ -79,6 +79,7 @@ import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.GrassGreenPrimary
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.RedstoneAccent
+import com.example.ui.util.NotificationHelper
 import kotlinx.coroutines.launch
 
 enum class AppNavTab(val title: String, val icon: ImageVector, val tag: String) {
@@ -114,12 +115,19 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
     val userLat by viewModel.userLat.collectAsStateWithLifecycle()
     val userLng by viewModel.userLng.collectAsStateWithLifecycle()
     val userAlt by viewModel.userAlt.collectAsStateWithLifecycle()
+    val cameraTarget by viewModel.mapCameraCenter.collectAsStateWithLifecycle()
     val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
     val activeRealm by viewModel.activeRealm.collectAsStateWithLifecycle()
     val allRealms by viewModel.allRealms.collectAsStateWithLifecycle()
     val members by viewModel.members.collectAsStateWithLifecycle()
     val waypoints by viewModel.waypoints.collectAsStateWithLifecycle()
+    val invites by viewModel.invites.collectAsStateWithLifecycle()
     val snackbarMsg by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+
+    // Initialize notification channels
+    LaunchedEffect(Unit) {
+        NotificationHelper.createNotificationChannel(context)
+    }
 
     // Handle snackbars
     LaunchedEffect(snackbarMsg) {
@@ -129,8 +137,8 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    // Permission launcher for fine/coarse GPS location
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
+    // Permission launcher for fine/coarse GPS location and POST_NOTIFICATIONS
+    val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
@@ -140,20 +148,29 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    // Initial GPS permission check
+    // Initial permissions check (Location & Notifications)
     LaunchedEffect(Unit) {
         val fineGranted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
         if (fineGranted) {
             viewModel.fetchCurrentGpsOnce()
-        } else {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+        }
+
+        val neededPermissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val notifGranted = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!notifGranted) {
+                neededPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (!fineGranted || neededPermissions.size > 2) {
+            permissionLauncher.launch(neededPermissions.toTypedArray())
         }
     }
 
@@ -200,7 +217,7 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
                             if (fineGranted) {
                                 viewModel.fetchCurrentGpsOnce()
                             } else {
-                                locationPermissionLauncher.launch(
+                                permissionLauncher.launch(
                                     arrayOf(
                                         Manifest.permission.ACCESS_FINE_LOCATION,
                                         Manifest.permission.ACCESS_COARSE_LOCATION
@@ -277,6 +294,7 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
                     currentUserCoords = currentUserCoords,
                     userGpsLat = userLat,
                     userGpsLng = userLng,
+                    cameraTarget = cameraTarget,
                     userProfile = userProfile,
                     activeRealm = activeRealm,
                     members = members,
@@ -284,6 +302,8 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
                     onAddWaypoint = { title, desc, type, coords ->
                         viewModel.addWaypoint(title, desc, type, targetCoords = coords)
                     },
+                    onDeleteWaypoint = { id -> viewModel.deleteWaypoint(id) },
+                    onTeleportToSpawn = { viewModel.teleportToSpawn() },
                     onRefreshGps = { viewModel.fetchCurrentGpsOnce() },
                     onSimulateMove = { dLat, dLng -> viewModel.setSimulationLocationOffset(dLat, dLng) },
                     onNavigateToGroups = { currentTab = AppNavTab.GROUPS }
@@ -292,16 +312,18 @@ fun CraftMapApp(viewModel: MainViewModel = viewModel()) {
                     activeRealm = activeRealm,
                     allRealms = allRealms,
                     members = members,
+                    invites = invites,
                     userProfile = userProfile,
                     currentUserCoords = currentUserCoords,
                     userGpsLat = userLat,
                     userGpsLng = userLng,
                     userGpsAlt = userAlt,
-                    onCreateRealm = { name, desc, useCurrent, lat, lng, alt ->
-                        viewModel.createRealm(name, desc, useCurrent, lat, lng, alt)
+                    onCreateRealm = { name, desc, useCurrent, lat, lng, alt, password ->
+                        viewModel.createRealm(name, desc, useCurrent, lat, lng, alt, password)
                     },
-                    onJoinRealm = { code -> viewModel.joinRealm(code) },
-                    onSwitchRealm = { id -> viewModel.switchActiveRealm(id) }
+                    onJoinRealm = { code, password -> viewModel.joinRealm(code, password) },
+                    onSwitchRealm = { id -> viewModel.switchActiveRealm(id) },
+                    onSendInvite = { tag, realm -> viewModel.sendRealmInvite(tag, realm, context) }
                 )
                 AppNavTab.WAYPOINTS -> WaypointsScreen(
                     waypoints = waypoints,

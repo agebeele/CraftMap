@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -80,11 +81,14 @@ fun MapScreen(
     currentUserCoords: MinecraftCoords,
     userGpsLat: Double,
     userGpsLng: Double,
+    cameraTarget: Pair<Double, Double>? = null,
     userProfile: UserProfile,
     activeRealm: GroupRealm?,
     members: List<GroupMember>,
     waypoints: List<Waypoint>,
     onAddWaypoint: (title: String, desc: String, type: WaypointType, coords: MinecraftCoords?) -> Unit,
+    onDeleteWaypoint: (String) -> Unit = {},
+    onTeleportToSpawn: () -> Unit = {},
     onRefreshGps: () -> Unit,
     onSimulateMove: (dLat: Double, dLng: Double) -> Unit,
     onNavigateToGroups: () -> Unit,
@@ -94,6 +98,8 @@ fun MapScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var preselectedCoords by remember { mutableStateOf<MinecraftCoords?>(null) }
     var showSimControls by remember { mutableStateOf(false) }
+    var isMapDetailOpen by remember { mutableStateOf(false) }
+    var showCoordinateHud by remember { mutableStateOf(true) }
 
     val spawnLat = activeRealm?.spawnLat ?: userGpsLat
     val spawnLng = activeRealm?.spawnLng ?: userGpsLng
@@ -103,11 +109,13 @@ fun MapScreen(
         // Map Renderer based on mode: Real World (Satellite / Streets) vs Voxel Canvas
         if (isRealWorldMapMode) {
             RealWorldMapView(
-                centerLat = userGpsLat,
-                centerLng = userGpsLng,
+                centerLat = spawnLat,
+                centerLng = spawnLng,
+                cameraTarget = cameraTarget,
                 spawnLat = spawnLat,
                 spawnLng = spawnLng,
                 spawnAlt = spawnAlt,
+                realmName = activeRealm?.name ?: "Reino Minecraft",
                 userGpsLat = userGpsLat,
                 userGpsLng = userGpsLng,
                 userProfile = userProfile,
@@ -118,6 +126,9 @@ fun MapScreen(
                     preselectedCoords = coords
                     showAddDialog = true
                 },
+                onDeleteWaypoint = onDeleteWaypoint,
+                onTeleportToSpawn = onTeleportToSpawn,
+                onSelectionChanged = { isMapDetailOpen = it },
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -140,15 +151,49 @@ fun MapScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            // Coordinate HUD
-            MinecraftCoordinateHud(
-                coords = currentUserCoords,
-                userGpsLat = userGpsLat,
-                userGpsLng = userGpsLng,
-                spawnLat = spawnLat,
-                spawnLng = spawnLng,
-                realmName = activeRealm?.name ?: "Sin Reino"
-            )
+            // Coordinate HUD (Togglable via button)
+            AnimatedVisibility(visible = showCoordinateHud) {
+                MinecraftCoordinateHud(
+                    coords = currentUserCoords,
+                    userGpsLat = userGpsLat,
+                    userGpsLng = userGpsLng,
+                    spawnLat = spawnLat,
+                    spawnLng = spawnLng,
+                    realmName = activeRealm?.name ?: "Sin Reino",
+                    onToggleVisibility = { showCoordinateHud = false }
+                )
+            }
+
+            if (!showCoordinateHud) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xF2141922),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DiamondCyan),
+                    modifier = Modifier
+                        .clickable { showCoordinateHud = true }
+                        .testTag("btn_expand_coords")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Visibility,
+                            contentDescription = "Desplegar Coordenadas",
+                            tint = DiamondCyan,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "📐 [X:${currentUserCoords.x}, Y:${currentUserCoords.y}, Z:${currentUserCoords.z}]  ▲ Desplegar",
+                            color = DiamondCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -317,33 +362,37 @@ fun MapScreen(
             }
         }
 
-        // Floating Action Button: Add Waypoint Pin
-        ExtendedFloatingActionButton(
-            onClick = {
-                preselectedCoords = null
-                showAddDialog = true
-            },
-            icon = {
-                Icon(
-                    Icons.Default.AddLocation,
-                    contentDescription = null,
-                    tint = Color.White
-                )
-            },
-            text = {
-                Text(
-                    text = "Añadir Pin / Casa",
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-            },
-            containerColor = GrassGreenPrimary,
-            contentColor = Color.White,
+        // Floating Action Button: Add Waypoint Pin (Hidden when viewing information of any point)
+        AnimatedVisibility(
+            visible = !isMapDetailOpen,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(16.dp)
-                .testTag("fab_add_waypoint")
-        )
+        ) {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    preselectedCoords = null
+                    showAddDialog = true
+                },
+                icon = {
+                    Icon(
+                        Icons.Default.AddLocation,
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Añadir Pin / Casa",
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                containerColor = GrassGreenPrimary,
+                contentColor = Color.White,
+                modifier = Modifier.testTag("fab_add_waypoint")
+            )
+        }
 
         // Dialog: Create Waypoint Pin
         if (showAddDialog) {

@@ -3,35 +3,31 @@ package com.example.ui.map
 import kotlin.math.PI
 import kotlin.math.atan
 import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.floor
 import kotlin.math.ln
-import kotlin.math.pow
-import kotlin.math.sin
 import kotlin.math.sinh
 import kotlin.math.tan
 
 enum class MapTileLayer(
     val title: String,
     val iconEmoji: String,
-    val maxZoom: Int = 18
+    val maxZoom: Int = 19
 ) {
-    SATELLITE("Satélite", "🛰️", 18),
-    STREETS("Calles", "🗺️", 19),
-    DARKSlate("Deepslate", "🌑", 19);
+    GOOGLE_HYBRID("Híbrido", "🛰️", 20),
+    GOOGLE_STREETS("Calles", "🗺️", 20),
+    VOYAGER("Atlas", "🧭", 19),
+    DEEPSLATE("Deepslate", "🌑", 19);
 
     fun getTileUrl(x: Int, y: Int, z: Int): String {
         return when (this) {
-            SATELLITE -> "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/$z/$y/$x"
-            STREETS -> "https://tile.openstreetmap.org/$z/$x/$y.png"
-            DARKSlate -> "https://basemaps.cartocdn.com/dark_all/$z/$x/$y.png"
+            GOOGLE_HYBRID -> "https://mt1.google.com/vt/lyrs=y&x=$x&y=$y&z=$z"
+            GOOGLE_STREETS -> "https://mt1.google.com/vt/lyrs=m&x=$x&y=$y&z=$z"
+            VOYAGER -> "https://basemaps.cartocdn.com/rastertiles/voyager/$z/$x/$y.png"
+            DEEPSLATE -> "https://basemaps.cartocdn.com/dark_all/$z/$x/$y.png"
         }
     }
 }
 
 object TileMath {
-    const val TILE_SIZE = 256
-
     /**
      * Converts longitude to tile X coordinate (floating point)
      */

@@ -5,6 +5,7 @@ data class GroupRealm(
     val name: String,
     val code: String, // 6-digit code for friends to join
     val description: String = "",
+    val password: String = "", // Optional access password for joining
     val spawnLat: Double,
     val spawnLng: Double,
     val spawnAlt: Double = 0.0,
@@ -36,4 +37,17 @@ data class UserProfile(
     val customSkinUri: String? = null,
     val minecraftUsername: String? = null, // for Minotar/mc-heads skin fetching
     val activeGroupId: String = "default_realm"
+)
+
+data class RealmInvite(
+    val id: String,
+    val realmId: String,
+    val realmName: String,
+    val realmCode: String,
+    val senderGamertag: String,
+    val targetGamertag: String,
+    val requiresPassword: Boolean = false,
+    val realmPassword: String = "",
+    val timestamp: Long = System.currentTimeMillis(),
+    val status: String = "Pendiente"
 )

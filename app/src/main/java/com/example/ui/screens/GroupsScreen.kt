@@ -26,9 +26,14 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -73,25 +78,34 @@ import com.example.ui.theme.NetherPortalPurple
 import com.example.ui.theme.RedstoneAccent
 import com.example.ui.theme.StoneOutline
 
+import androidx.compose.material.icons.filled.Mail
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PersonAdd
+import com.example.data.model.RealmInvite
+
 @Composable
 fun GroupsScreen(
     activeRealm: GroupRealm?,
     allRealms: List<GroupRealm>,
     members: List<GroupMember>,
+    invites: List<RealmInvite> = emptyList(),
     userProfile: UserProfile,
     currentUserCoords: MinecraftCoords,
     userGpsLat: Double,
     userGpsLng: Double,
     userGpsAlt: Double,
-    onCreateRealm: (name: String, desc: String, useCurrentGps: Boolean, lat: Double, lng: Double, alt: Double) -> Unit,
-    onJoinRealm: (code: String) -> Unit,
+    onCreateRealm: (name: String, desc: String, useCurrentGps: Boolean, lat: Double, lng: Double, alt: Double, password: String) -> Unit,
+    onJoinRealm: (code: String, password: String) -> Unit,
     onSwitchRealm: (realmId: String) -> Unit,
+    onSendInvite: (gamertag: String, realm: GroupRealm) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
     var showSwitchDialog by remember { mutableStateOf(false) }
+    var showInviteDialog by remember { mutableStateOf(false) }
+    var promptInviteForPassword by remember { mutableStateOf<RealmInvite?>(null) }
 
     LazyColumn(
         modifier = modifier
@@ -233,31 +247,121 @@ fun GroupsScreen(
 
         // Action Buttons Row (Crear Reino / Unirse / Cambiar)
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                MinecraftButton(
-                    text = "Nuevo Reino",
-                    onClick = { showCreateDialog = true },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    modifier = Modifier.weight(1f).testTag("btn_create_realm")
-                )
-                MinecraftButton(
-                    text = "Unirse",
-                    onClick = { showJoinDialog = true },
-                    color = DiamondCyan,
-                    textColor = Color(0xFF12161C),
-                    icon = { Icon(Icons.Default.GroupAdd, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    modifier = Modifier.weight(1f).testTag("btn_join_realm")
-                )
-                if (allRealms.size > 1) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     MinecraftButton(
-                        text = "Cambiar",
-                        onClick = { showSwitchDialog = true },
-                        color = Color(0xFF2C3848),
-                        modifier = Modifier.weight(0.9f)
+                        text = "Nuevo Reino",
+                        onClick = { showCreateDialog = true },
+                        icon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        modifier = Modifier.weight(1f).testTag("btn_create_realm")
                     )
+                    MinecraftButton(
+                        text = "Unirse",
+                        onClick = { showJoinDialog = true },
+                        color = DiamondCyan,
+                        textColor = Color(0xFF12161C),
+                        icon = { Icon(Icons.Default.GroupAdd, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        modifier = Modifier.weight(1f).testTag("btn_join_realm")
+                    )
+                    if (allRealms.size > 1) {
+                        MinecraftButton(
+                            text = "Cambiar",
+                            onClick = { showSwitchDialog = true },
+                            color = Color(0xFF2C3848),
+                            modifier = Modifier.weight(0.9f)
+                        )
+                    }
+                }
+
+                // Dedicated INVITE FRIEND button with notification integration
+                activeRealm?.let { realm ->
+                    MinecraftButton(
+                        text = "✉️ Invitar Amigo por Gamertag (Notificación)",
+                        onClick = { showInviteDialog = true },
+                        color = GoldAccent,
+                        textColor = Color(0xFF141922),
+                        icon = { Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        modifier = Modifier.fillMaxWidth().testTag("btn_invite_friend")
+                    )
+                }
+            }
+        }
+
+        // Invites List Section
+        if (invites.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Notifications, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "INVITACIONES DE AMIGOS (${invites.size})",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+
+            items(invites) { inv ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().border(1.dp, GoldAccent.copy(alpha = 0.5f), RoundedCornerShape(6.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1B232D)),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(inv.realmName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                MinecraftBadge(text = inv.status, color = if (inv.status == "Enviada") GoldAccent else DiamondCyan)
+                                if (inv.requiresPassword) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    MinecraftBadge(text = "🔒 Protegido", color = GoldAccent)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "De @${inv.senderGamertag} para @${inv.targetGamertag}",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "Código: ${inv.realmCode}",
+                                color = DiamondCyan,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+
+                        MinecraftButton(
+                            text = "Conectar",
+                            onClick = {
+                                if (inv.requiresPassword) {
+                                    promptInviteForPassword = inv
+                                } else {
+                                    onJoinRealm(inv.realmCode, "")
+                                }
+                            },
+                            color = GrassGreenPrimary,
+                            modifier = Modifier.height(34.dp)
+                        )
+                    }
                 }
             }
         }
@@ -335,8 +439,8 @@ fun GroupsScreen(
             userGpsLng = userGpsLng,
             userGpsAlt = userGpsAlt,
             onDismiss = { showCreateDialog = false },
-            onConfirm = { name, desc, useCurrent, lat, lng, alt ->
-                onCreateRealm(name, desc, useCurrent, lat, lng, alt)
+            onConfirm = { name, desc, useCurrent, lat, lng, alt, password ->
+                onCreateRealm(name, desc, useCurrent, lat, lng, alt, password)
                 showCreateDialog = false
             }
         )
@@ -346,9 +450,89 @@ fun GroupsScreen(
     if (showJoinDialog) {
         JoinRealmDialog(
             onDismiss = { showJoinDialog = false },
-            onConfirm = { code ->
-                onJoinRealm(code)
+            onConfirm = { code, password ->
+                onJoinRealm(code, password)
                 showJoinDialog = false
+            }
+        )
+    }
+
+    // Dialog: Prompt Password for Protected Invite
+    promptInviteForPassword?.let { invite ->
+        var invitePass by remember { mutableStateOf(invite.realmPassword) }
+        var showInvitePass by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { promptInviteForPassword = null },
+            containerColor = DeepslateCard,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Contraseña del Reino", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "El reino '${invite.realmName}' requiere contraseña para unirse. Ingresa la clave de acceso:",
+                        color = Color(0xFFD1D5DB),
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = invitePass,
+                        onValueChange = { invitePass = it },
+                        label = { Text("Contraseña de Acceso") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showInvitePass = !showInvitePass }) {
+                                Icon(
+                                    if (showInvitePass) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = Color(0xFFA0AEC0)
+                                )
+                            }
+                        },
+                        visualTransformation = if (showInvitePass) VisualTransformation.None else PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = GoldAccent,
+                            unfocusedBorderColor = Color(0xFF404D5E)
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("input_invite_password")
+                    )
+                }
+            },
+            confirmButton = {
+                MinecraftButton(
+                    text = "Unirse al Reino",
+                    onClick = {
+                        onJoinRealm(invite.realmCode, invitePass.trim())
+                        promptInviteForPassword = null
+                    },
+                    color = GrassGreenPrimary
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { promptInviteForPassword = null }) {
+                    Text("Cancelar", color = Color(0xFFA0AEC0))
+                }
+            }
+        )
+    }
+
+    // Dialog: Invite Friend by Gamertag
+    if (showInviteDialog && activeRealm != null) {
+        InviteFriendDialog(
+            realm = activeRealm,
+            onDismiss = { showInviteDialog = false },
+            onConfirm = { gamertag ->
+                onSendInvite(gamertag, activeRealm)
+                showInviteDialog = false
             }
         )
     }
@@ -406,6 +590,96 @@ fun GroupsScreen(
             }
         )
     }
+}
+
+@Composable
+fun InviteFriendDialog(
+    realm: GroupRealm,
+    onDismiss: () -> Unit,
+    onConfirm: (gamertag: String) -> Unit
+) {
+    var gamertag by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = DeepslateCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("✉️ Invitar a ${realm.name}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Código de Reino: ${realm.code}",
+                    color = DiamondCyan,
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Ingresa el Gamertag de Minecraft de tu compañero. La app enviará la invitación e instantáneamente generará una notificación del sistema Android en su teléfono con el enlace al World Spawn:",
+                    color = Color(0xFFD1D5DB),
+                    fontSize = 12.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = gamertag,
+                    onValueChange = { gamertag = it },
+                    label = { Text("Gamertag del amigo (ej: Steve, MineKing99)") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = GoldAccent,
+                        unfocusedBorderColor = Color(0xFF404D5E)
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("input_invite_gamertag")
+                )
+
+                if (realm.password.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0x2EF6AD55),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GoldAccent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Reino protegido con contraseña. Tu compañero recibirá la clave de acceso en la invitación.",
+                                color = GoldAccent,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            MinecraftButton(
+                text = "Enviar Invitación y Notificar",
+                onClick = {
+                    if (gamertag.isNotBlank()) {
+                        onConfirm(gamertag.trim())
+                    }
+                },
+                color = GoldAccent,
+                textColor = Color(0xFF141A22),
+                modifier = Modifier.testTag("btn_confirm_invite")
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar", color = Color(0xFFA0AEC0))
+            }
+        }
+    )
 }
 
 @Composable
@@ -505,13 +779,29 @@ fun CreateRealmDialog(
     userGpsLng: Double,
     userGpsAlt: Double,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, desc: String, useCurrent: Boolean, lat: Double, lng: Double, alt: Double) -> Unit
+    onConfirm: (name: String, desc: String, useCurrent: Boolean, lat: Double, lng: Double, alt: Double, password: String) -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
-    var useCurrentGps by remember { mutableStateOf(true) }
-    var customLatStr by remember { mutableStateOf(userGpsLat.toString()) }
-    var customLngStr by remember { mutableStateOf(userGpsLng.toString()) }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var useCurrentGps by remember { mutableStateOf(false) } // Default to letting user set exact coords!
+    var mapsCombinedStr by remember { mutableStateOf("") }
+    var customLatStr by remember { mutableStateOf(String.format(java.util.Locale.US, "%.6f", userGpsLat)) }
+    var customLngStr by remember { mutableStateOf(String.format(java.util.Locale.US, "%.6f", userGpsLng)) }
+
+    fun parseAndApplyCoords(input: String) {
+        val parts = input.trim().split(Regex("[,;\\s]+")).filter { it.isNotBlank() }
+        if (parts.size >= 2) {
+            val pLat = parts[0].toDoubleOrNull()
+            val pLng = parts[1].toDoubleOrNull()
+            if (pLat != null && pLng != null) {
+                customLatStr = pLat.toString()
+                customLngStr = pLng.toString()
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -572,7 +862,7 @@ fun CreateRealmDialog(
                         onClick = { useCurrentGps = true },
                         colors = RadioButtonDefaults.colors(selectedColor = GrassGreenPrimary)
                     )
-                    Text("Usar mi ubicación GPS actual como Spawn", color = Color.White, fontSize = 13.sp)
+                    Text("Usar mi ubicación GPS actual (${String.format("%.4f", userGpsLat)}, ${String.format("%.4f", userGpsLng)})", color = Color.White, fontSize = 12.sp)
                 }
 
                 Row(
@@ -584,37 +874,107 @@ fun CreateRealmDialog(
                         onClick = { useCurrentGps = false },
                         colors = RadioButtonDefaults.colors(selectedColor = GrassGreenPrimary)
                     )
-                    Text("Ingresar coordenadas GPS personalizadas", color = Color.White, fontSize = 13.sp)
+                    Text("Pegar coordenadas de Google Maps (Recomendado)", color = Color.White, fontSize = 12.sp)
                 }
 
                 if (!useCurrentGps) {
                     Spacer(modifier = Modifier.height(6.dp))
+
+                    // Easy Google Maps paste input: handles "lat, lng" directly
                     OutlinedTextField(
-                        value = customLatStr,
-                        onValueChange = { customLatStr = it },
-                        label = { Text("Latitud Spawn") },
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
-                        modifier = Modifier.fillMaxWidth()
+                        value = mapsCombinedStr,
+                        onValueChange = {
+                            mapsCombinedStr = it
+                            parseAndApplyCoords(it)
+                        },
+                        label = { Text("Pegar de Google Maps (ej: 19.432608, -99.133209)") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = GoldAccent,
+                            unfocusedBorderColor = Color(0xFF404D5E)
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("input_maps_combined")
                     )
+
                     Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = customLngStr,
-                        onValueChange = { customLngStr = it },
-                        label = { Text("Longitud Spawn") },
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customLatStr,
+                            onValueChange = { customLatStr = it },
+                            label = { Text("Latitud Spawn") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                            modifier = Modifier.weight(1f).testTag("input_spawn_lat")
+                        )
+                        OutlinedTextField(
+                            value = customLngStr,
+                            onValueChange = { customLngStr = it },
+                            label = { Text("Longitud Spawn") },
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                            modifier = Modifier.weight(1f).testTag("input_spawn_lng")
+                        )
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Seguridad del Reino (Contraseña Opcional):",
+                    color = GoldAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña para ingresar (Opcional)") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showPassword) "Ocultar" else "Mostrar",
+                                tint = Color(0xFFA0AEC0)
+                            )
+                        }
+                    },
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = GoldAccent,
+                        unfocusedBorderColor = Color(0xFF404D5E)
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("input_realm_password")
+                )
+
+                Text(
+                    text = "🔒 Si estableces una contraseña, los amigos deberán ingresarla al unirse.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         },
         confirmButton = {
             MinecraftButton(
-                text = "Crear Reino",
+                text = "Crear Reino y Fijar Spawn",
                 onClick = {
                     val lat = customLatStr.toDoubleOrNull() ?: userGpsLat
                     val lng = customLngStr.toDoubleOrNull() ?: userGpsLng
-                    onConfirm(name.ifBlank { "Reino Nuevo" }, desc, useCurrentGps, lat, lng, userGpsAlt)
+                    onConfirm(name.ifBlank { "Reino Minecraft" }, desc, useCurrentGps, lat, lng, userGpsAlt, password.trim())
                 },
+                color = GrassGreenPrimary,
                 modifier = Modifier.testTag("btn_confirm_create_realm")
             )
         },
@@ -627,9 +987,11 @@ fun CreateRealmDialog(
 @Composable
 fun JoinRealmDialog(
     onDismiss: () -> Unit,
-    onConfirm: (code: String) -> Unit
+    onConfirm: (code: String, password: String) -> Unit
 ) {
     var code by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -659,12 +1021,42 @@ fun JoinRealmDialog(
                         .fillMaxWidth()
                         .testTag("input_realm_code")
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Contraseña (si el reino tiene)") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(18.dp))
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showPassword) "Ocultar" else "Mostrar",
+                                tint = Color(0xFFA0AEC0)
+                            )
+                        }
+                    },
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = DiamondCyan,
+                        unfocusedBorderColor = Color(0xFF404D5E)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_join_password")
+                )
             }
         },
         confirmButton = {
             MinecraftButton(
                 text = "Unirse",
-                onClick = { onConfirm(code) },
+                onClick = { onConfirm(code, password.trim()) },
                 color = DiamondCyan,
                 textColor = Color(0xFF13181E),
                 modifier = Modifier.testTag("btn_confirm_join_realm")
